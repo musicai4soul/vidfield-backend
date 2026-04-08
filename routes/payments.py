@@ -1,8 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-import os
-import hmac
-import hashlib
+import os, hmac, hashlib
 
 try:
     import razorpay
@@ -12,11 +10,34 @@ except (ImportError, Exception):
     RAZORPAY_AVAILABLE = False
 
 from auth import get_current_user
+from database import get_supabase
 
-router = APIRouter()
+router = APIRouter(prefix="/api/payments", tags=["payments"])
 
-RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_ID     = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+
+# Plan prices in paise (INR × 100)
+PLAN_PRICES = {
+    "starter": 29900,
+    "creator": 79900,
+    "pro":     199900,
+}
+
+# Credits granted per plan
+PLAN_CREDITS = {
+    "free":    10,
+    "starter": 50,
+    "creator": 200,
+    "pro":     600,
+}
+
+PLAN_NAMES = {
+    "starter": "Starter",
+    "creator": "Creator",
+    "pro":     "Pro",
+}
+
 
 def get_razorpay_client():
     if not RAZORPAY_AVAILABLE or not razorpay:
@@ -27,61 +48,81 @@ def get_razorpay_client():
 
 
 class CreateOrderRequest(BaseModel):
-    amount: int  # in paise
-    plan: str
+    plan_id: str
 
 
 class VerifyPaymentRequest(BaseModel):
-    razorpay_order_id: str
+    razorpay_order_id:   str
     razorpay_payment_id: str
-    razorpay_signature: str
-    plan: str
+    razorpay_signature:  str
+    plan_id:             str
 
 
-PLAN_CREDITS = {
-    "starter": 50,
-    "pro": 200,
-    "studio": 1000,
-}
+@router.get("/plans")
+def list_plans():
+    """Return available paid plans with prices."""
+    return [
+        {"id": k, "name": PLAN_NAMES[k], "amount": v, "credits": PLAN_CREDITS[k]}
+        for k, v in PLAN_PRICES.items()
+    ]
 
 
 @router.post("/create-order")
 async def create_order(req: CreateOrderRequest, user=Depends(get_current_user)):
+    amount = PLAN_PRICES.get(req.plan_id)
+    if amount is None:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {req.plan_id}")
+
     client = get_razorpay_client()
     order_data = {
-        "amount": req.amount,
+        "amount":   amount,
         "currency": "INR",
-        "receipt": f"order_{user['sub']}_{req.plan}",
+        "receipt":  f"order_{user['sub'][:8]}_{req.plan_id}",
     }
     order = client.order.create(data=order_data)
-    return {"order_id": order["id"], "amount": order["amount"], "currency": order["currency"]}
+    return {
+        "razorpay_order_id": order["id"],
+        "amount":            order["amount"],
+        "currency":          order["currency"],
+        "email":             user.get("email", ""),
+    }
 
 
 @router.post("/verify")
 async def verify_payment(req: VerifyPaymentRequest, user=Depends(get_current_user)):
     client = get_razorpay_client()
+
+    # Verify signature
     try:
         client.utility.verify_payment_signature({
-            "razorpay_order_id": req.razorpay_order_id,
+            "razorpay_order_id":   req.razorpay_order_id,
             "razorpay_payment_id": req.razorpay_payment_id,
-            "razorpay_signature": req.razorpay_signature,
+            "razorpay_signature":  req.razorpay_signature,
         })
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid payment signature")
 
-    credits_to_add = PLAN_CREDITS.get(req.plan, 0)
+    credits_to_add = PLAN_CREDITS.get(req.plan_id, 0)
     if credits_to_add == 0:
-        raise HTTPException(status_code=400, detail="Invalid plan")
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {req.plan_id}")
 
-    from database import supabase
-    supabase.rpc("add_credits", {"user_id": user["sub"], "amount": credits_to_add}).execute()
+    supabase = get_supabase()
+
+    # Add credits using consistent RPC param names
+    supabase.rpc("add_credits", {"p_user_id": user["sub"], "p_amount": credits_to_add}).execute()
+
+    # Update profile plan
+    supabase.table("profiles").update({"plan": req.plan_id}).eq("user_id", user["sub"]).execute()
+
+    # Record payment
     supabase.table("payments").insert({
-        "user_id": user["sub"],
-        "razorpay_order_id": req.razorpay_order_id,
+        "user_id":             user["sub"],
+        "razorpay_order_id":   req.razorpay_order_id,
         "razorpay_payment_id": req.razorpay_payment_id,
-        "plan": req.plan,
-        "amount": credits_to_add,
-        "status": "completed",
+        "plan":                req.plan_id,
+        "amount":              PLAN_PRICES.get(req.plan_id, 0),
+        "credits_added":       credits_to_add,
+        "status":              "completed",
     }).execute()
 
-    return {"success": True, "credits_added": credits_to_add}
+    return {"success": True, "credits_added": credits_to_add, "plan": req.plan_id}
