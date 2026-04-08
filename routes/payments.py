@@ -10,7 +10,7 @@ except ImportError:
     _DistNotFound = type("DistributionNotFound", (Exception,), {})
     _pkg = _types.ModuleType("pkg_resources")
     _pkg.get_distribution = lambda name: type("D", (), {"version": "0", "project_name": name})()
-    _pkg.require = lambda *a, **kw: None
+    _pkg.require = lambda *a, **kw: [type("Req", (), {"version": "1.4.1"})()]
     _pkg.DistributionNotFound = _DistNotFound
     _pkg.RequirementParseError = type("RequirementParseError", (Exception,), {})
     _sys.modules["pkg_resources"] = _pkg
