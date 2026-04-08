@@ -2,14 +2,22 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import os, hmac, hashlib
 
+# Ensure pkg_resources is available (required by razorpay, missing in Python 3.12 Railway venvs)
+try:
+    import pkg_resources
+except ImportError:
+    import sys as _sys, types as _types
+    _pkg = _types.ModuleType("pkg_resources")
+    _pkg.get_distribution = lambda name: type("D", (), {"version": "0", "project_name": name})()
+    _pkg.require = lambda *a, **kw: None
+    _sys.modules["pkg_resources"] = _pkg
+
 try:
     import razorpay
     RAZORPAY_AVAILABLE = True
     print("[payments] razorpay imported OK")
 except (ImportError, Exception) as e:
-    import traceback as _tb
     print(f"[payments] razorpay import FAILED: {e}")
-    _tb.print_exc()
     razorpay = None
     RAZORPAY_AVAILABLE = False
 
