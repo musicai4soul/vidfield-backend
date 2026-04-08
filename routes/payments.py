@@ -5,7 +5,11 @@ import os, hmac, hashlib
 try:
     import razorpay
     RAZORPAY_AVAILABLE = True
-except (ImportError, Exception):
+    print("[payments] razorpay imported OK")
+except (ImportError, Exception) as e:
+    import traceback as _tb
+    print(f"[payments] razorpay import FAILED: {e}")
+    _tb.print_exc()
     razorpay = None
     RAZORPAY_AVAILABLE = False
 
