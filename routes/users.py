@@ -20,7 +20,7 @@ def _ensure_profile(supabase, user_id: str, email: str) -> dict:
     Fetches the user profile. If it doesn't exist yet (first login),
     creates it with the free plan and 10 starter credits.
     """
-    res = supabase.table("profiles").select("*").eq("user_id", user_id).single().execute()
+    res = supabase.table("profiles").select("*").eq("user_id", user_id).maybe_single().execute()
 
     if res.data:
         return res.data
