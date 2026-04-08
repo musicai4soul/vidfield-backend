@@ -7,9 +7,12 @@ try:
     import pkg_resources
 except ImportError:
     import sys as _sys, types as _types
+    _DistNotFound = type("DistributionNotFound", (Exception,), {})
     _pkg = _types.ModuleType("pkg_resources")
     _pkg.get_distribution = lambda name: type("D", (), {"version": "0", "project_name": name})()
     _pkg.require = lambda *a, **kw: None
+    _pkg.DistributionNotFound = _DistNotFound
+    _pkg.RequirementParseError = type("RequirementParseError", (Exception,), {})
     _sys.modules["pkg_resources"] = _pkg
 
 try:
