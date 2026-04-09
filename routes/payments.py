@@ -32,6 +32,13 @@ router = APIRouter(prefix="/api/payments", tags=["payments"])
 RAZORPAY_KEY_ID     = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 
+# ── Beta-mode flag (flip BETA_MODE env var in Railway — no code change needed)
+# true  → block real Razorpay orders + skip Fal.ai (safe open beta)
+# false → live payments enabled
+BETA_MODE = os.getenv("BETA_MODE", "true").lower() in ("true", "1", "yes")
+if BETA_MODE:
+    print("[beta] BETA_MODE=true — real Razorpay orders DISABLED")
+
 # Plan prices in paise (INR × 100)
 PLAN_PRICES = {
     "starter": 29900,
@@ -84,6 +91,13 @@ def list_plans():
 
 @router.post("/create-order")
 async def create_order(req: CreateOrderRequest, user=Depends(get_current_user)):
+    # ── Beta-mode guard ────────────────────────────────────────────────────
+    if BETA_MODE:
+        raise HTTPException(
+            status_code=503,
+            detail="Payments are disabled during beta. Enjoy your free credits!"
+        )
+    # ────────────────────────────────────────────────────────────────────────
     amount = PLAN_PRICES.get(req.plan_id)
     if amount is None:
         raise HTTPException(status_code=400, detail=f"Unknown plan: {req.plan_id}")
