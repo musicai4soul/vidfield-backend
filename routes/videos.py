@@ -26,6 +26,18 @@ CREDIT_COST = {
 # Fal.ai model ID (Kling 1.6 or similar)
 FAL_MODEL = "fal-ai/kling-video/v1.6/standard/text-to-video"
 
+# ── Beta-mode flag ─────────────────────────────────────────────────────────
+# Flip BETA_MODE env var in Railway to go live. No code change needed.
+# true  → skip Fal.ai + block Razorpay orders (safe for open beta / testing)
+# false → real AI video generation + real payments enabled
+BETA_MODE = os.getenv("BETA_MODE", "true").lower() in ("true", "1", "yes")
+BETA_DEMO_VIDEO_URL = (
+    "https://v3b.fal.media/files/b/0a957ddd/erUjzF9hKWwHfDSzI7OKS_output.mp4"
+)
+if BETA_MODE:
+    print("[beta] BETA_MODE=true — Fal.ai calls and real payments DISABLED")
+# ──────────────────────────────────────────────────────────────────────────
+
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -59,6 +71,17 @@ async def _run_fal_generation(job_id: str, user_id: str, prompt: str,
 
     # Set Fal key
     os.environ["FAL_KEY"] = settings.fal_key
+
+    # ── Beta-mode guard ────────────────────────────────────────────────────
+    if BETA_MODE:
+        print(f"[beta] job {job_id}: Fal.ai skipped, returning demo video")
+        get_supabase().table("videos").update({
+            "status": "completed",
+            "video_url": BETA_DEMO_VIDEO_URL,
+            "completed_at": datetime.utcnow().isoformat()
+        }).eq("id", job_id).execute()
+        return
+    # ────────────────────────────────────────────────────────────────────────
 
     try:
         # Map aspect ratio to Fal format
